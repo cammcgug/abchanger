@@ -3,23 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>A/B Waveform Player (Real Waveform)</title>
+  <title>A/B Waveform Player (SoundCloud-Style Waveform)</title>
   <style>
     :root{
       --bg:#0b0d12;
-      --card:#121622;
       --text:#e9eefc;
       --muted:#a7b0c8;
-      --line:rgba(255,255,255,0.10);
 
       /* changes with A/B */
-      --accent:#5eead4;   /* A default */
+      --accent:#5eead4;
       --accentSoft: rgba(94,234,212,0.18);
       --accentSoft2: rgba(94,234,212,0.10);
 
-      --waveBase: rgba(255,255,255,0.20);
       --waveBase2: rgba(255,255,255,0.12);
-      --knob:#ffffff;
     }
 
     *{box-sizing:border-box}
@@ -193,7 +189,7 @@
       <div class="meta">
         <div class="title" id="trackTitle">Visual Harmonics — A/B Reference</div>
         <div class="sub">
-          <span>Real waveform (decoded from WAV)</span>
+          <span>SoundCloud-style waveform (decoded from WAV)</span>
           <span>•</span>
           <span>Click waveform to seek</span>
         </div>
@@ -203,9 +199,9 @@
         <button class="primary" id="playBtn">Play</button>
         <button class="toggle active" id="abBtn" title="Toggle A/B (A and B)">A</button>
 
-        <div class="status" id="status">
+        <div class="status">
           <span class="dot" aria-hidden="true"></span>
-          <span id="statusText">Loading waveforms…</span>
+          <span id="statusText">Click Play to load waveform</span>
         </div>
       </div>
     </div>
@@ -245,18 +241,15 @@
   </div>
 
   <script>
-    // --- WAV FILES (same folder as this HTML) ---
     const SRC_A = "track-a.wav";
     const SRC_B = "track-b.wav";
 
-    // Playback (simple and reliable)
     const audioA = new Audio(SRC_A);
     const audioB = new Audio(SRC_B);
     audioA.preload = "auto";
     audioB.preload = "auto";
 
-    // Waveform data (decoded from the actual audio)
-    let peaksA = null;  // Float32Array of peaks [0..1]
+    let peaksA = null;
     let peaksB = null;
 
     let active = "A";
@@ -275,6 +268,21 @@
     const vol = document.getElementById("vol");
     const xfade = document.getElementById("xfade");
     const statusText = document.getElementById("statusText");
+
+    // One shared AudioContext (created on first user gesture)
+    let AC = null;
+    function ensureAudioContext(){
+      if(!AC){
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        AC = new AudioCtx();
+      }
+      // Some browsers start it suspended until gesture; resume after gesture
+      if (AC.state === "suspended") AC.resume();
+      return AC;
+    }
+
+    let waveformsLoading = false;
+    let waveformsReady = false;
 
     function currentAudio(){ return active === "A" ? audioA : audioB; }
     function currentPeaks(){ return active === "A" ? peaksA : peaksB; }
@@ -308,7 +316,6 @@
     }
 
     function resizeCanvasToCSS(){
-      // Match canvas internal resolution to its rendered size for crisp lines
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       const w = Math.max(1, Math.floor(rect.width * dpr));
@@ -323,20 +330,38 @@
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
 
+    function resamplePeaksToBars(peaks, bars){
+      if(!peaks || peaks.length === 0) return null;
+      if(bars <= 0) return null;
+      if(peaks.length === bars) return peaks;
+
+      const out = new Float32Array(bars);
+      const step = peaks.length / bars;
+
+      for(let i=0;i<bars;i++){
+        const start = Math.floor(i * step);
+        const end = Math.min(peaks.length, Math.floor((i + 1) * step));
+        let m = 0;
+        for(let j=start; j<end; j++){
+          const v = peaks[j];
+          if(v > m) m = v;
+        }
+        out[i] = m;
+      }
+      return out;
+    }
+
     function drawWave(progress01){
       resizeCanvasToCSS();
-
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0,0,w,h);
 
-      // background subtle gradient-ish fill
       ctx.fillStyle = "rgba(0,0,0,0.10)";
       ctx.fillRect(0,0,w,h);
 
-      const peaks = currentPeaks();
-      if(!peaks){
-        // placeholder line
+      const peaksHi = currentPeaks();
+      if(!peaksHi){
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
         ctx.lineWidth = Math.max(1, Math.floor((window.devicePixelRatio||1)));
         ctx.beginPath();
@@ -346,49 +371,55 @@
         return;
       }
 
-      const mid = h/2;
-      const base1 = getCSSVar("--waveBase") || "rgba(255,255,255,0.20)";
-      const base2 = getCSSVar("--waveBase2") || "rgba(255,255,255,0.12)";
-      const accent = getCSSVar("--accent") || "#5eead4";
+      const dpr = window.devicePixelRatio || 1;
+      const bars = Math.floor(w / (2.2 * dpr));
+      const peaks = resamplePeaksToBars(peaksHi, Math.max(300, bars));
 
-      // draw "unplayed" waveform (two layers for thickness)
-      const barCount = peaks.length;
-      const barW = w / barCount;
+      const mid = h / 2;
+      const base = getCSSVar("--waveBase2") || "rgba(255,255,255,0.14)";
+      const played = getCSSVar("--accent") || "#5eead4";
 
-      // Unplayed
-      ctx.fillStyle = base2;
-      for(let i=0;i<barCount;i++){
-        const p = peaks[i];
-        const x = i * barW;
-        const amp = p * (h*0.44);
-        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+      const gap = Math.max(1, Math.floor(1.2 * dpr));
+      const barW = Math.max(1, Math.floor((w - gap * (peaks.length - 1)) / peaks.length));
+      const radius = Math.max(2, Math.floor(barW / 2));
+
+      const p = Math.max(0, Math.min(1, progress01));
+      const playedBars = Math.floor(p * peaks.length);
+
+      function rr(x, y, width, height, r){
+        r = Math.min(r, width/2, height/2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + width, y, x + width, y + height, r);
+        ctx.arcTo(x + width, y + height, x, y + height, r);
+        ctx.arcTo(x, y + height, x, y, r);
+        ctx.arcTo(x, y, x + width, y, r);
+        ctx.closePath();
       }
-      ctx.fillStyle = base1;
-      for(let i=0;i<barCount;i++){
-        const p = peaks[i];
-        const x = i * barW;
-        const amp = p * (h*0.38);
-        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+
+      ctx.fillStyle = base;
+      let x = 0;
+      for(let i=0;i<peaks.length;i++){
+        const a = Math.pow(peaks[i], 0.72);
+        const barH = Math.max(2 * dpr, a * (h * 0.90));
+        const y = mid - barH / 2;
+        rr(x, y, barW, barH, radius);
+        ctx.fill();
+        x += barW + gap;
+        if (x > w) break;
       }
 
-      // Played overlay
-      const playedBars = Math.floor(progress01 * barCount);
-      ctx.fillStyle = accent;
+      ctx.fillStyle = played;
+      x = 0;
       for(let i=0;i<playedBars;i++){
-        const p = peaks[i];
-        const x = i * barW;
-        const amp = p * (h*0.44);
-        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+        const a = Math.pow(peaks[i], 0.72);
+        const barH = Math.max(2 * dpr, a * (h * 0.90));
+        const y = mid - barH / 2;
+        rr(x, y, barW, barH, radius);
+        ctx.fill();
+        x += barW + gap;
+        if (x > w) break;
       }
-
-      // playhead line
-      const px = Math.max(0, Math.min(w, progress01 * w));
-      ctx.strokeStyle = "rgba(255,255,255,0.92)";
-      ctx.lineWidth = Math.max(2, Math.floor((window.devicePixelRatio||1) * 1.25));
-      ctx.beginPath();
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, h);
-      ctx.stroke();
     }
 
     function updateUI(){
@@ -418,11 +449,19 @@
     audioB.addEventListener("loadedmetadata", updateUI);
 
     async function play(){
+      // Ensure AudioContext is allowed (important for waveform decode in embeds)
+      ensureAudioContext();
+
+      // Kick off waveform decoding on first user gesture
+      if (!waveformsReady && !waveformsLoading){
+        loadWaveforms(); // don't await; let playback start immediately
+      }
+
       try{
         await currentAudio().play();
         isPlaying = true;
       }catch(e){
-        // Autoplay can be blocked until user gesture
+        // autoplay restrictions may still require explicit click (you already clicked)
       }
       updateUI();
     }
@@ -439,7 +478,6 @@
       else play();
     });
 
-    // Seek by clicking waveform (keeps A and B aligned)
     waveWrap.addEventListener("click", (e) => {
       const rect = waveWrap.getBoundingClientRect();
       const x = Math.min(Math.max(0, e.clientX - rect.left), rect.width);
@@ -460,7 +498,6 @@
       const fromAudio = currentAudio();
       const toAudio = (to === "A") ? audioA : audioB;
 
-      // Match time
       const t = fromAudio.currentTime || 0;
       const dTo = toAudio.duration || Infinity;
       toAudio.currentTime = Math.min(t, isFinite(dTo) ? Math.max(0, dTo - 0.01) : t);
@@ -503,21 +540,19 @@
     audioA.addEventListener("ended", pause);
     audioB.addEventListener("ended", pause);
 
-    // --------- REAL WAVEFORM GENERATION ----------
-    async function decodeToPeaks(url, bars = 1400){
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const ac = new AudioCtx();
+    async function decodeToPeaks(url, targetBars = 12000){
+      const ac = ensureAudioContext();
 
-      const res = await fetch(url);
-      if(!res.ok) throw new Error(`Failed to fetch ${url}`);
+      const res = await fetch(url, { cache: "no-store" });
+      if(!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
       const arr = await res.arrayBuffer();
       const buf = await ac.decodeAudioData(arr);
 
-      // Merge channels to mono (for waveform display)
       const ch0 = buf.getChannelData(0);
       const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
 
       const length = buf.length;
+      const bars = Math.min(targetBars, length);
       const blockSize = Math.floor(length / bars) || 1;
 
       const peaks = new Float32Array(bars);
@@ -529,47 +564,48 @@
         let max = 0;
         for(let j=start; j<end; j++){
           const v0 = Math.abs(ch0[j]);
-          const v = ch1 ? (v0 + Math.abs(ch1[j])) * 0.5 : v0;
+          const v  = ch1 ? (v0 + Math.abs(ch1[j])) * 0.5 : v0;
           if(v > max) max = v;
         }
-        peaks[i] = max; // 0..1ish
+        peaks[i] = max;
       }
 
-      // Normalize
       let peakMax = 0;
       for (let i=0;i<peaks.length;i++) if (peaks[i] > peakMax) peakMax = peaks[i];
       if (peakMax > 0){
         for (let i=0;i<peaks.length;i++) peaks[i] = peaks[i] / peakMax;
       }
 
-      // Close the decoding context (we're only using it to decode)
-      ac.close();
-
       return peaks;
     }
 
     async function loadWaveforms(){
+      waveformsLoading = true;
+      statusText.textContent = "Decoding waveforms…";
+
       try{
-        statusText.textContent = "Decoding Track A…";
-        peaksA = await decodeToPeaks(SRC_A);
+        const [a, b] = await Promise.all([
+          decodeToPeaks(SRC_A),
+          decodeToPeaks(SRC_B),
+        ]);
+        peaksA = a;
+        peaksB = b;
 
-        statusText.textContent = "Decoding Track B…";
-        peaksB = await decodeToPeaks(SRC_B);
-
+        waveformsReady = true;
         statusText.textContent = "Ready";
         updateUI();
       }catch(err){
         console.error(err);
-        statusText.textContent = "Waveform decode failed (try local server)";
+        statusText.textContent = "Waveform decode blocked—click Play again";
+      }finally{
+        waveformsLoading = false;
       }
     }
 
-    // Redraw on resize
-    window.addEventListener("resize", () => updateUI());
+    window.addEventListener("resize", updateUI);
 
     setThemeForActive();
     updateUI();
-    loadWaveforms();
   </script>
 </body>
 </html>
