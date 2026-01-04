@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>A/B Waveform Player (Real Waveform)</title>
+  <style>
+    :root{
+      --bg:#0b0d12;
+      --card:#121622;
+      --text:#e9eefc;
+      --muted:#a7b0c8;
+      --line:rgba(255,255,255,0.10);
+
+      /* changes with A/B */
+      --accent:#5eead4;   /* A default */
+      --accentSoft: rgba(94,234,212,0.18);
+      --accentSoft2: rgba(94,234,212,0.10);
+
+      --waveBase: rgba(255,255,255,0.20);
+      --waveBase2: rgba(255,255,255,0.12);
+      --knob:#ffffff;
+    }
+
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 30% 10%, #142036 0%, var(--bg) 55%);
+      color:var(--text);
+      display:flex;
+      min-height:100vh;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+
+    .player{
+      width:min(980px, 100%);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border:1px solid rgba(255,255,255,0.08);
+      border-radius:18px;
+      overflow:hidden;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+    }
+
+    .top{
+      display:flex;
+      gap:18px;
+      padding:18px;
+      align-items:center;
+      border-bottom:1px solid rgba(255,255,255,0.08);
+      background: rgba(18,22,34,0.75);
+      backdrop-filter: blur(10px);
+    }
+    .meta{ flex:1; min-width:0; }
+    .title{
+      font-weight:700;
+      font-size:18px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      margin-bottom:6px;
+    }
+    .sub{
+      color:var(--muted);
+      font-size:13px;
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+    button{
+      appearance:none;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.05);
+      color:var(--text);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:650;
+      transition: transform 0.05s ease, background 0.15s ease, border 0.15s ease;
+    }
+    button:hover{ background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); }
+    button:active{ transform: translateY(1px); }
+
+    button.primary{
+      border-color: color-mix(in srgb, var(--accent) 40%, rgba(255,255,255,0.10));
+      background: var(--accentSoft2);
+    }
+    button.primary:hover{
+      background: var(--accentSoft);
+      border-color: color-mix(in srgb, var(--accent) 60%, rgba(255,255,255,0.10));
+    }
+
+    button.toggle.active{
+      border-color: color-mix(in srgb, var(--accent) 60%, rgba(255,255,255,0.10));
+      background: var(--accentSoft);
+    }
+
+    .waveWrap{
+      position:relative;
+      padding:18px;
+      background: rgba(18,22,34,0.55);
+    }
+
+    .waveCanvasWrap{
+      position:relative;
+      width:100%;
+      border-radius:14px;
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.25);
+      cursor:pointer;
+      user-select:none;
+    }
+
+    canvas{
+      display:block;
+      width:100%;
+      height:160px;
+    }
+
+    .barRow{
+      display:flex;
+      justify-content:space-between;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:10px;
+    }
+
+    .bottom{
+      padding:14px 18px 18px;
+      border-top:1px solid rgba(255,255,255,0.08);
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+      background: rgba(18,22,34,0.75);
+    }
+
+    .pill{
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.05);
+      padding:8px 10px;
+      border-radius:999px;
+      font-size:12px;
+      color:var(--muted);
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+
+    input[type="range"]{
+      width: 170px;
+      accent-color: var(--accent);
+    }
+
+    .activeLabel{ font-weight:800; color: var(--text); }
+    .hint{ margin-left:auto; color:var(--muted); font-size:12px; opacity:0.9; }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size:11px;
+      padding:2px 6px;
+      border-radius:6px;
+      border:1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color:var(--text);
+    }
+
+    .status{
+      margin-left:auto;
+      font-size:12px;
+      color:var(--muted);
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .dot{
+      width:8px;height:8px;border-radius:50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent);
+      opacity:0.9;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="player" role="region" aria-label="A/B audio player">
+    <div class="top">
+      <div class="meta">
+        <div class="title" id="trackTitle">Visual Harmonics — A/B Reference</div>
+        <div class="sub">
+          <span>Real waveform (decoded from WAV)</span>
+          <span>•</span>
+          <span>Click waveform to seek</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="primary" id="playBtn">Play</button>
+        <button class="toggle active" id="abBtn" title="Toggle A/B (A and B)">A</button>
+
+        <div class="status" id="status">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="statusText">Loading waveforms…</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="waveWrap">
+      <div class="waveCanvasWrap" id="waveWrap">
+        <canvas id="waveCanvas" width="1200" height="160"></canvas>
+      </div>
+
+      <div class="barRow">
+        <span id="timeNow">0:00</span>
+        <span id="timeTotal">0:00</span>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="pill">
+        Active:
+        <span class="activeLabel" id="activeLabel">A</span>
+        <span id="activeFile" style="opacity:.85">track-a.wav</span>
+      </div>
+
+      <div class="pill">
+        Volume
+        <input id="vol" type="range" min="0" max="1" step="0.01" value="0.9" />
+      </div>
+
+      <div class="pill">
+        Switch overlap (ms)
+        <input id="xfade" type="range" min="0" max="120" step="5" value="25" />
+      </div>
+
+      <div class="hint">
+        Shortcuts: <span class="kbd">Space</span> play/pause • <span class="kbd">A</span>/<span class="kbd">B</span> switch
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- WAV FILES (same folder as this HTML) ---
+    const SRC_A = "track-a.wav";
+    const SRC_B = "track-b.wav";
+
+    // Playback (simple and reliable)
+    const audioA = new Audio(SRC_A);
+    const audioB = new Audio(SRC_B);
+    audioA.preload = "auto";
+    audioB.preload = "auto";
+
+    // Waveform data (decoded from the actual audio)
+    let peaksA = null;  // Float32Array of peaks [0..1]
+    let peaksB = null;
+
+    let active = "A";
+    let isPlaying = false;
+
+    const playBtn = document.getElementById("playBtn");
+    const abBtn = document.getElementById("abBtn");
+    const waveWrap = document.getElementById("waveWrap");
+    const canvas = document.getElementById("waveCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const timeNow = document.getElementById("timeNow");
+    const timeTotal = document.getElementById("timeTotal");
+    const activeLabel = document.getElementById("activeLabel");
+    const activeFile = document.getElementById("activeFile");
+    const vol = document.getElementById("vol");
+    const xfade = document.getElementById("xfade");
+    const statusText = document.getElementById("statusText");
+
+    function currentAudio(){ return active === "A" ? audioA : audioB; }
+    function currentPeaks(){ return active === "A" ? peaksA : peaksB; }
+
+    function setThemeForActive(){
+      const root = document.documentElement;
+      if(active === "A"){
+        root.style.setProperty("--accent", "#5eead4");
+        root.style.setProperty("--accentSoft", "rgba(94,234,212,0.18)");
+        root.style.setProperty("--accentSoft2", "rgba(94,234,212,0.10)");
+      }else{
+        root.style.setProperty("--accent", "#60a5fa");
+        root.style.setProperty("--accentSoft", "rgba(96,165,250,0.18)");
+        root.style.setProperty("--accentSoft2", "rgba(96,165,250,0.10)");
+      }
+    }
+
+    function applyVolume(){
+      const v = Number(vol.value);
+      audioA.volume = v;
+      audioB.volume = v;
+    }
+    vol.addEventListener("input", applyVolume);
+    applyVolume();
+
+    function fmtTime(sec){
+      if (!isFinite(sec) || sec < 0) sec = 0;
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${String(s).padStart(2,"0")}`;
+    }
+
+    function resizeCanvasToCSS(){
+      // Match canvas internal resolution to its rendered size for crisp lines
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(1, Math.floor(rect.width * dpr));
+      const h = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== w || canvas.height !== h){
+        canvas.width = w;
+        canvas.height = h;
+      }
+    }
+
+    function getCSSVar(name){
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function drawWave(progress01){
+      resizeCanvasToCSS();
+
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0,0,w,h);
+
+      // background subtle gradient-ish fill
+      ctx.fillStyle = "rgba(0,0,0,0.10)";
+      ctx.fillRect(0,0,w,h);
+
+      const peaks = currentPeaks();
+      if(!peaks){
+        // placeholder line
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = Math.max(1, Math.floor((window.devicePixelRatio||1)));
+        ctx.beginPath();
+        ctx.moveTo(0, h/2);
+        ctx.lineTo(w, h/2);
+        ctx.stroke();
+        return;
+      }
+
+      const mid = h/2;
+      const base1 = getCSSVar("--waveBase") || "rgba(255,255,255,0.20)";
+      const base2 = getCSSVar("--waveBase2") || "rgba(255,255,255,0.12)";
+      const accent = getCSSVar("--accent") || "#5eead4";
+
+      // draw "unplayed" waveform (two layers for thickness)
+      const barCount = peaks.length;
+      const barW = w / barCount;
+
+      // Unplayed
+      ctx.fillStyle = base2;
+      for(let i=0;i<barCount;i++){
+        const p = peaks[i];
+        const x = i * barW;
+        const amp = p * (h*0.44);
+        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+      }
+      ctx.fillStyle = base1;
+      for(let i=0;i<barCount;i++){
+        const p = peaks[i];
+        const x = i * barW;
+        const amp = p * (h*0.38);
+        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+      }
+
+      // Played overlay
+      const playedBars = Math.floor(progress01 * barCount);
+      ctx.fillStyle = accent;
+      for(let i=0;i<playedBars;i++){
+        const p = peaks[i];
+        const x = i * barW;
+        const amp = p * (h*0.44);
+        ctx.fillRect(x, mid-amp, Math.max(1, barW*0.9), amp*2);
+      }
+
+      // playhead line
+      const px = Math.max(0, Math.min(w, progress01 * w));
+      ctx.strokeStyle = "rgba(255,255,255,0.92)";
+      ctx.lineWidth = Math.max(2, Math.floor((window.devicePixelRatio||1) * 1.25));
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, h);
+      ctx.stroke();
+    }
+
+    function updateUI(){
+      const a = currentAudio();
+      const d = a.duration || 0;
+      const t = a.currentTime || 0;
+
+      timeNow.textContent = fmtTime(t);
+      timeTotal.textContent = fmtTime(d);
+
+      const pct = d > 0 ? (t / d) : 0;
+
+      activeLabel.textContent = active;
+      activeFile.textContent = active === "A" ? SRC_A : SRC_B;
+
+      abBtn.textContent = active;
+      abBtn.classList.toggle("active", true);
+
+      playBtn.textContent = isPlaying ? "Pause" : "Play";
+
+      drawWave(pct);
+    }
+
+    audioA.addEventListener("timeupdate", updateUI);
+    audioB.addEventListener("timeupdate", updateUI);
+    audioA.addEventListener("loadedmetadata", updateUI);
+    audioB.addEventListener("loadedmetadata", updateUI);
+
+    async function play(){
+      try{
+        await currentAudio().play();
+        isPlaying = true;
+      }catch(e){
+        // Autoplay can be blocked until user gesture
+      }
+      updateUI();
+    }
+
+    function pause(){
+      audioA.pause();
+      audioB.pause();
+      isPlaying = false;
+      updateUI();
+    }
+
+    playBtn.addEventListener("click", () => {
+      if (isPlaying) pause();
+      else play();
+    });
+
+    // Seek by clicking waveform (keeps A and B aligned)
+    waveWrap.addEventListener("click", (e) => {
+      const rect = waveWrap.getBoundingClientRect();
+      const x = Math.min(Math.max(0, e.clientX - rect.left), rect.width);
+      const pct = rect.width ? x / rect.width : 0;
+
+      const dA = audioA.duration || 0;
+      const dB = audioB.duration || 0;
+
+      if (dA > 0) audioA.currentTime = pct * dA;
+      if (dB > 0) audioB.currentTime = pct * dB;
+
+      updateUI();
+    });
+
+    async function switchAB(to){
+      if (to === active) return;
+
+      const fromAudio = currentAudio();
+      const toAudio = (to === "A") ? audioA : audioB;
+
+      // Match time
+      const t = fromAudio.currentTime || 0;
+      const dTo = toAudio.duration || Infinity;
+      toAudio.currentTime = Math.min(t, isFinite(dTo) ? Math.max(0, dTo - 0.01) : t);
+
+      const wasPlaying = isPlaying;
+
+      active = to;
+      setThemeForActive();
+      updateUI();
+
+      if (!wasPlaying) return;
+
+      const ms = Number(xfade.value);
+      try{
+        await toAudio.play();
+        setTimeout(() => { fromAudio.pause(); }, ms);
+        isPlaying = true;
+      }catch(e){
+        fromAudio.pause();
+        isPlaying = false;
+      }
+      updateUI();
+    }
+
+    abBtn.addEventListener("click", () => {
+      switchAB(active === "A" ? "B" : "A");
+    });
+
+    window.addEventListener("keydown", (e) => {
+      const key = e.key.toLowerCase();
+      if (key === " "){
+        e.preventDefault();
+        if (isPlaying) pause();
+        else play();
+      }
+      if (key === "a") switchAB("A");
+      if (key === "b") switchAB("B");
+    });
+
+    audioA.addEventListener("ended", pause);
+    audioB.addEventListener("ended", pause);
+
+    // --------- REAL WAVEFORM GENERATION ----------
+    async function decodeToPeaks(url, bars = 1400){
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ac = new AudioCtx();
+
+      const res = await fetch(url);
+      if(!res.ok) throw new Error(`Failed to fetch ${url}`);
+      const arr = await res.arrayBuffer();
+      const buf = await ac.decodeAudioData(arr);
+
+      // Merge channels to mono (for waveform display)
+      const ch0 = buf.getChannelData(0);
+      const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+
+      const length = buf.length;
+      const blockSize = Math.floor(length / bars) || 1;
+
+      const peaks = new Float32Array(bars);
+
+      for(let i=0;i<bars;i++){
+        const start = i * blockSize;
+        const end = Math.min(start + blockSize, length);
+
+        let max = 0;
+        for(let j=start; j<end; j++){
+          const v0 = Math.abs(ch0[j]);
+          const v = ch1 ? (v0 + Math.abs(ch1[j])) * 0.5 : v0;
+          if(v > max) max = v;
+        }
+        peaks[i] = max; // 0..1ish
+      }
+
+      // Normalize
+      let peakMax = 0;
+      for (let i=0;i<peaks.length;i++) if (peaks[i] > peakMax) peakMax = peaks[i];
+      if (peakMax > 0){
+        for (let i=0;i<peaks.length;i++) peaks[i] = peaks[i] / peakMax;
+      }
+
+      // Close the decoding context (we're only using it to decode)
+      ac.close();
+
+      return peaks;
+    }
+
+    async function loadWaveforms(){
+      try{
+        statusText.textContent = "Decoding Track A…";
+        peaksA = await decodeToPeaks(SRC_A);
+
+        statusText.textContent = "Decoding Track B…";
+        peaksB = await decodeToPeaks(SRC_B);
+
+        statusText.textContent = "Ready";
+        updateUI();
+      }catch(err){
+        console.error(err);
+        statusText.textContent = "Waveform decode failed (try local server)";
+      }
+    }
+
+    // Redraw on resize
+    window.addEventListener("resize", () => updateUI());
+
+    setThemeForActive();
+    updateUI();
+    loadWaveforms();
+  </script>
+</body>
+</html>
